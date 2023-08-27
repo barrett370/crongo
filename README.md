@@ -13,8 +13,9 @@ Given a struct implemeting in the `Tasker` interface, a `name` and an `time.Inte
 
 type myTask struct{}
 
-func (myTask) Run(context.Context) {
+func (myTask) Run(context.Context) error {
     println("work!")
+    return nil
 }
 
 ...
