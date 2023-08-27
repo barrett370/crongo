@@ -16,8 +16,9 @@ type Scheduler struct {
 	logger   crongolog.Logger
 	op       Tasker
 	interval time.Duration
-	ticker   *time.Ticker
+	c        <-chan time.Time
 	done     chan struct{}
+	errs     chan<- error
 }
 
 type OptFn = func(*Scheduler)
@@ -28,8 +29,11 @@ func New(name string, task Tasker, interval time.Duration, optFns ...OptFn) *Sch
 		logger:   crongolog.NoopLogger{},
 		op:       task,
 		interval: interval,
-		ticker:   time.NewTicker(interval),
-		done:     make(chan struct{}),
+		// using Tick here to allow for easy mocking
+		// WARNING: it leaks the underlying ticker
+		// I do not see this being an issue as I intend applications of this lib to run "forever"
+		c:    time.Tick(interval),
+		done: make(chan struct{}),
 	}
 	for _, fn := range optFns {
 		fn(s)
@@ -39,6 +43,18 @@ func New(name string, task Tasker, interval time.Duration, optFns ...OptFn) *Sch
 
 func WithDefaultLogger(s *Scheduler) {
 	s.logger = log.New(os.Stdout, fmt.Sprintf("[CRON: %s] ", s.name), log.Ldate|log.Ltime|log.Lshortfile|log.LUTC)
+}
+
+func WithErrorsOut(errs chan<- error) func(s *Scheduler) {
+	return func(s *Scheduler) {
+		s.errs = errs
+	}
+}
+
+func WithMockTicker(c <-chan time.Time) func(*Scheduler) {
+	return func(s *Scheduler) {
+		s.c = c
+	}
 }
 
 func (s *Scheduler) Start() {
@@ -56,11 +72,15 @@ func (s *Scheduler) Stop() {
 func (s *Scheduler) loop() {
 	for {
 		select {
-		case <-s.ticker.C:
+		case ts := <-s.c:
 			ctx, cancel := context.WithTimeout(context.Background(), s.interval)
+			s.logger.Printf("running task, ts: %v\n", ts)
 			err := s.op.Run(ctx)
 			if err != nil {
 				s.logger.Printf("error while running work func. err: %v\n", err)
+				if s.errs != nil {
+					s.errs <- err
+				}
 			}
 			cancel()
 		case <-s.done:
