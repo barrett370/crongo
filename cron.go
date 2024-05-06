@@ -29,10 +29,12 @@ func New(name string, task Tasker, interval time.Duration, optFns ...OptFn) *Sch
 		logger:   crongolog.NoopLogger{},
 		op:       task,
 		interval: interval,
-		// using Tick here to allow for easy mocking
-		// WARNING: it leaks the underlying ticker
-		// I do not see this being an issue as I intend applications of this lib to run "forever"
-		c:    time.Tick(interval),
+		c: func() <-chan time.Time {
+			if interval <= 0 {
+				return nil
+			}
+			return time.NewTicker(interval).C
+		}(),
 		done: make(chan struct{}),
 	}
 	for _, fn := range optFns {
